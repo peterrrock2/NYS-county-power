@@ -23,7 +23,12 @@ from cuda_power_function import compute_power_cupy as compute_power
 @click.option("--burst-length", default=1, help="The length of the burst to run")
 @click.option("--n-bursts", default=1000, help="The number of bursts to run the ")
 @click.option("--threshold", default=0.5, help="The threshold for the discrep")
-def main(use_range, uuid, burst_length, n_bursts, threshold):
+@click.option(
+    "--show-progress",
+    is_flag=True,
+    help="Flag for showing the progress bar. Useful for testing",
+)
+def main(use_range, uuid, burst_length, n_bursts, threshold, show_progress):
     # fmt: off
     m_orig = np.array(
         [6945.,4158,2322,10242,1464,2087,4156,7508,4452,5341,2695,725,765,1583,2292,1157,3187,]
@@ -72,58 +77,73 @@ def main(use_range, uuid, burst_length, n_bursts, threshold):
     if use_range:
         discrep_function = lambda x: cp.max(x) - cp.min(x)
 
-    curr_diff = diff_fn(u_matrix=cu_umat)
+    curr_diff = diff_fn(orig_u_matrix=cu_umat)
     initial_discrep = discrep_function(curr_diff)
-
-    discrep_list = [(-1, initial_discrep)]
-    cur_discrep = initial_discrep
 
     best_so_far = initial_discrep
     best_u = cu_u.copy()
 
-    for i in tqdm(
-        range(0, n_bursts * burst_length, burst_length), miniters=n_bursts / 1000
-    ):
-        # Compute the sampling probabilities
-        probabilities = cp.abs(curr_diff)
-        probabilities /= cp.sum(probabilities)
+    file_name = f"Livingston_MCMC_discrep_L1_lenburst_{burst_length}_iters_{n_bursts}_T_{threshold}_id_{uuid}.txt"
 
-        # Sample indices based on the probabilities
-        indices = cp.random.choice(len(curr_diff), size=burst_length, p=probabilities)
-
-        update_values = cp.where(curr_diff[indices] < 0, 1, -1)
-        values = cp.zeros_like(curr_diff, dtype=cp.int32)
-        cp.add.at(values, indices, update_values)
-
-        cp.add.at(cu_u, indices, values[indices])
-        cu_umat = (cu_u / cp.sum(cu_u))[:, cp.newaxis]
-        new_diff = diff_fn(u_matrix=cu_umat)
-        new_discrep = discrep_function(new_diff)
-
-        if new_discrep < best_so_far:
-            best_so_far = new_discrep
-            discrep_list.append((i, new_discrep))
-            best_u = cu_u.copy()
-
-        else:
-            reject_cut = np.exp(-new_discrep / cur_discrep)
-            if np.random.rand() >= reject_cut:
-                cp.add.at(cu_u, indices, -values[indices])
-                continue
-
-        cur_discrep = new_discrep
-        curr_diff = new_diff
-
-    file_name = f"Livingston_MCMC_discrep_L1_lenburst_{burst_length}_iters_{n_bursts}_id_{uuid}.txt"
     if use_range:
-        file_name = f"Livingston_MCMC_discrep_range_lenburst_{burst_length}_iters_{n_bursts}_id_{uuid}.txt"
+        file_name = f"Livingston_MCMC_discrep_range_lenburst_{burst_length}_iters_{n_bursts}_T_{threshold}_id_{uuid}.txt"
+
     with open(f"./MCMC_results/{file_name}", "w") as f:
+        print(
+            f"{-1}, {initial_discrep}, {best_u.astype(int).tolist()}",
+            file=f,
+            flush=True,
+        )
+
+        cur_discrep = initial_discrep
+
+        for i in tqdm(
+            range(0, n_bursts * burst_length, burst_length),
+            miniters=n_bursts / 1000,
+            disable=not show_progress,
+        ):
+
+            # Compute the sampling probabilities
+            probabilities = cp.abs(curr_diff)
+            probabilities /= cp.sum(probabilities)
+
+            # Sample indices based on the probabilities
+            indices = cp.random.choice(
+                len(curr_diff), size=burst_length, p=probabilities
+            )
+
+            update_values = cp.where(curr_diff[indices] < 0, 1, -1)
+            values = cp.zeros_like(curr_diff, dtype=cp.int32)
+            cp.add.at(values, indices, update_values)
+
+            cp.add.at(cu_u, indices, values[indices])
+            cu_umat = (cu_u / cp.sum(cu_u))[:, cp.newaxis]
+            new_diff = diff_fn(orig_u_matrix=cu_umat)
+            new_discrep = discrep_function(new_diff)
+
+            if new_discrep < best_so_far:
+                best_so_far = new_discrep
+                best_u = cu_u.copy()
+                print(
+                    f"{i}, {new_discrep}, {best_u.astype(int).tolist()}",
+                    file=f,
+                    flush=True,
+                )
+
+            else:
+                reject_cut = np.exp(-new_discrep / cur_discrep)
+                if np.random.rand() >= reject_cut:
+                    cp.add.at(cu_u, indices, -values[indices])
+                    continue
+
+            cur_discrep = new_discrep
+            curr_diff = new_diff
+
+        print("\n", file=f)
+        print("=" * 100, file=f)
         print(f"Initial descrepancy: {initial_discrep}", file=f)
         print(f"Best descrepancy:    {best_so_far}", file=f)
-        print(f"Best 'u' vector: {best_u.tolist()}", file=f)
-        print()
-        for i, d in discrep_list:
-            print(f"{i}, {d}")
+        print(f"Best 'u' vector: {best_u.astype(int).tolist()}", file=f)
 
 
 if __name__ == "__main__":
