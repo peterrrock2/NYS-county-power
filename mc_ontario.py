@@ -6,6 +6,7 @@ import click
 import random
 
 import cupy as cp
+
 from cuda_power_function import compute_power_cupy as compute_power
 
 
@@ -31,25 +32,19 @@ from cuda_power_function import compute_power_cupy as compute_power
 def main(use_range, uuid, burst_length, n_bursts, threshold, show_progress):
     # fmt: off
     m_orig = np.array(
-        [2284,1668,5436,5140,11_109,
-            3640,14_170,5210,3921,3679,
-            3473,4106,3931,9404,2403,
-            6637,3360,2644,1641,15_860,
-            2740]
-    ) 
-    m = ( np.array( 
-        [2284,1668,5436,5140,11_109,
-            3640,14_170,5210,3921,3679,
-            3473,4106,3931,9404,2403,
-            6637,3360,2644,1641,15_860,
-            2740]
-    ) / 112_458) 
+        [2284,1668,5436,5140,11109, 3640,14170,5210,3921,3679, 3473,4106,3931,9404,2403, 6637,3360,2644,1641,15860, 2740]
+    )
+    m_orig.sort()
+    m = m_orig / np.sum(m_orig)
     # fmt: on
 
     if threshold == 0.67:
         threshold = 2.0 / 3
 
-    with open("NYS_counties_ontario.pkl", "rb") as f:
+    # Note that NYS_counties does not cover all possible subsets. There is an assumption of
+    # one town always voting in the affirmative. This substantially reduces the size of the
+    # matrix that
+    with open("NYS_counties_ontario_full.pkl", "rb") as f:
         A_subsets = pickle.load(f)
 
     subset_masks = np.zeros((len(m), len(A_subsets)), dtype=np.float64)
@@ -59,22 +54,20 @@ def main(use_range, uuid, burst_length, n_bursts, threshold, show_progress):
     subset_masks_bool = subset_masks.astype(np.bool_)
     subset_masks_float = subset_masks.astype(np.float64)
 
-    population = 10000
+    population = 100000
 
-    mround = np.around(m_orig / np.sum(m_orig) * population, 0)
+    mround = np.around(m * population, 0)
 
     in_arr = mround
-    in_arr_normal = (mround / np.sum(mround))[:, np.newaxis]
 
     cu_m = cp.asarray(m)
     cu_u = cp.asarray(in_arr)
-    cu_umat = cp.asarray(in_arr_normal)
+    cu_umat = cp.asarray(in_arr)[:, cp.newaxis]
     cu_subset_masks_bool = cp.asarray(subset_masks_bool)
     cu_subset_masks_float = cp.asarray(subset_masks_float)
 
-    diff_fn = partial(
+    pow_fn = partial(
         compute_power,
-        m=cu_m,
         subset_masks_bool=cu_subset_masks_bool,
         subset_masks_float=cu_subset_masks_float,
         T=threshold,
@@ -85,7 +78,7 @@ def main(use_range, uuid, burst_length, n_bursts, threshold, show_progress):
     if use_range:
         discrep_function = lambda x: cp.max(x) - cp.min(x)
 
-    curr_diff = diff_fn(orig_u_matrix=cu_umat)
+    curr_diff = pow_fn(u_matrix=cu_umat) - cu_m
     initial_discrep = discrep_function(curr_diff)
 
     best_so_far = initial_discrep
@@ -124,8 +117,8 @@ def main(use_range, uuid, burst_length, n_bursts, threshold, show_progress):
             cp.add.at(values, indices, update_values)
 
             cp.add.at(cu_u, indices, values[indices])
-            cu_umat = (cu_u / cp.sum(cu_u))[:, cp.newaxis]
-            new_diff = diff_fn(u_matrix=cu_umat)
+            cu_umat = cu_u[:, cp.newaxis]
+            new_diff = pow_fn(u_matrix=cu_umat) - cu_m
             new_discrep = discrep_function(new_diff)
 
             if new_discrep < best_so_far:
@@ -145,12 +138,6 @@ def main(use_range, uuid, burst_length, n_bursts, threshold, show_progress):
 
             cur_discrep = new_discrep
             curr_diff = new_diff
-
-        print("\n", file=f)
-        print("=" * 100, file=f)
-        print(f"Initial descrepancy: {initial_discrep}", file=f)
-        print(f"Best descrepancy:    {best_so_far}", file=f)
-        print(f"Best 'u' vector: {best_u.astype(int).tolist()}", file=f)
 
 
 if __name__ == "__main__":
