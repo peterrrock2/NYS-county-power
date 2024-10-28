@@ -100,11 +100,13 @@ def computer_power_helper_numpy_relaxed(
     # This computes the power discrepancy if the functions aren’t linear threshold functions, but linear bounded functions
     # as in the Diakonikolas et al. paper.
     n = len(m)
-    subset_weights = np.transpose(subset_masks).dot(weights)  # num_subsets
+
+    contained_matrix = 2. * subset_masks - 1.  # (num_towns, num_subsets)
+
+    subset_weights = np.transpose(contained_matrix).dot(weights)  # num_subsets
     subset_weights_min_T = subset_weights - T
     payoffs = np.clip(subset_weights_min_T, a_min=-1, a_max=1)  # num_subsets
 
-    contained_matrix = 2 * subset_masks - 1  # (num_towns, num_subsets)
     banzhaf_indices = contained_matrix.dot(payoffs) / 2 ** (n - 1)
 
     return banzhaf_indices - m
