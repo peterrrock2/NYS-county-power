@@ -29,7 +29,8 @@ from cuda_power_function import compute_power_cupy as compute_power
     is_flag=True,
     help="Flag for showing the progress bar. Useful for testing",
 )
-def main(use_range, uuid, burst_length, n_bursts, threshold, show_progress):
+@click.option("--population", default=100000, help="The population size")
+def main(use_range, uuid, burst_length, n_bursts, threshold, show_progress, population):
     # fmt: off
     m_orig = np.array(
         [2284,1668,5436,5140,11109, 3640,14170,5210,3921,3679, 3473,4106,3931,9404,2403, 6637,3360,2644,1641,15860, 2740]
@@ -44,7 +45,7 @@ def main(use_range, uuid, burst_length, n_bursts, threshold, show_progress):
     # Note that NYS_counties does not cover all possible subsets. There is an assumption of
     # one town always voting in the affirmative. This substantially reduces the size of the
     # matrix that
-    with open("NYS_counties_ontario_full.pkl", "rb") as f:
+    with open("NYS_counties_ontario.pkl", "rb") as f:
         A_subsets = pickle.load(f)
 
     subset_masks = np.zeros((len(m), len(A_subsets)), dtype=np.float64)
@@ -53,8 +54,6 @@ def main(use_range, uuid, burst_length, n_bursts, threshold, show_progress):
 
     subset_masks_bool = subset_masks.astype(np.bool_)
     subset_masks_float = subset_masks.astype(np.float64)
-
-    population = 100000
 
     mround = np.around(m * population, 0)
 
@@ -84,14 +83,17 @@ def main(use_range, uuid, burst_length, n_bursts, threshold, show_progress):
     best_so_far = initial_discrep
     best_u = cu_u.copy()
 
-    file_name = f"Ontario_MCMC_discrep_L1_lenburst_{burst_length}_iters_{n_bursts}_T_{threshold}_id_{uuid}.txt"
+    file_name = f"Ontario_MCMC_discrep_L1_lenburst_{burst_length}_iters_{n_bursts}_T_{threshold}_id_{uuid}.jsonl"
 
     if use_range:
-        file_name = f"Ontario_MCMC_discrep_range_lenburst_{burst_length}_iters_{n_bursts}_T_{threshold}_id_{uuid}.txt"
+        file_name = f"Ontario_MCMC_discrep_range_lenburst_{burst_length}_iters_{n_bursts}_T_{threshold}_id_{uuid}.jsonl"
+
+    cp.random.seed(seed=int(uuid))
+    np.random.seed(seed=int(uuid))
 
     with open(f"./MCMC_results/{file_name}", "w") as f:
         print(
-            f"{-1}, {initial_discrep}, {best_u.astype(int).tolist()}",
+            f"{str('{')}\"step\": {-1}, \"discrepancy\": {initial_discrep}, \"weights\": {best_u.astype(int).tolist()}{str('}')}",
             file=f,
             flush=True,
         )
@@ -125,7 +127,7 @@ def main(use_range, uuid, burst_length, n_bursts, threshold, show_progress):
                 best_so_far = new_discrep
                 best_u = cu_u.copy()
                 print(
-                    f"{i}, {new_discrep}, {best_u.astype(int).tolist()}",
+                    f"{str('{')}\"step\": {i}, \"discrepancy\": {best_so_far}, \"weights\": {best_u.astype(int).tolist()}{str('}')}",
                     file=f,
                     flush=True,
                 )
