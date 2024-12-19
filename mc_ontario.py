@@ -12,9 +12,9 @@ from cuda_power_function import compute_power_cupy as compute_power
 
 @click.command()
 @click.option(
-    "--use-range",
+    "--use-log",
     is_flag=True,
-    help="Flag for using the range discrepancy rather than l1",
+    help="Flag for using the log discrepancy rather than l1",
 )
 @click.option(
     "--uuid",
@@ -30,7 +30,7 @@ from cuda_power_function import compute_power_cupy as compute_power
     help="Flag for showing the progress bar. Useful for testing",
 )
 @click.option("--population", default=100000, help="The population size")
-def main(use_range, uuid, burst_length, n_bursts, threshold, show_progress, population):
+def main(use_log, uuid, burst_length, n_bursts, threshold, show_progress, population):
     # fmt: off
     m_orig = np.array(
         [2284,1668,5436,5140,11109, 3640,14170,5210,3921,3679, 3473,4106,3931,9404,2403, 6637,3360,2644,1641,15860, 2740]
@@ -74,26 +74,30 @@ def main(use_range, uuid, burst_length, n_bursts, threshold, show_progress, popu
 
     discrep_function = lambda x: cp.sum(cp.abs(x))
 
-    if use_range:
-        discrep_function = lambda x: cp.max(x) - cp.min(x)
+    if use_log:
+        discrep_function = lambda x: cp.sum(
+            cp.abs(cp.log(x / cu_m + 1))
+        )  # + 1 because we plugin diff
 
-    curr_diff = pow_fn(u_matrix=cu_umat) - cu_m
+    curr_power = pow_fn(u_matrix=cu_umat)
+    curr_diff = curr_power - cu_m
     initial_discrep = discrep_function(curr_diff)
 
     best_so_far = initial_discrep
     best_u = cu_u.copy()
+    best_power = curr_power.copy()
 
     file_name = f"Ontario_MCMC_discrep_L1_lenburst_{burst_length}_iters_{n_bursts}_T_{threshold}_id_{uuid}.jsonl"
 
-    if use_range:
-        file_name = f"Ontario_MCMC_discrep_range_lenburst_{burst_length}_iters_{n_bursts}_T_{threshold}_id_{uuid}.jsonl"
+    if use_log:
+        file_name = f"Ontario_MCMC_discrep_log_lenburst_{burst_length}_iters_{n_bursts}_T_{threshold}_id_{uuid}.jsonl"
 
     cp.random.seed(seed=int(uuid))
     np.random.seed(seed=int(uuid))
 
     with open(f"./MCMC_results/{file_name}", "w") as f:
         print(
-            f"{str('{')}\"step\": {-1}, \"discrepancy\": {initial_discrep}, \"weights\": {best_u.astype(int).tolist()}{str('}')}",
+            f"{str('{')}\"step\": {-1}, \"discrepancy\": {initial_discrep}, \"weights\": {best_u.astype(int).tolist()}, \"power\": {best_power.astype(float).tolist()}{str('}')}",
             file=f,
             flush=True,
         )
@@ -120,14 +124,16 @@ def main(use_range, uuid, burst_length, n_bursts, threshold, show_progress, popu
 
             cp.add.at(cu_u, indices, values[indices])
             cu_umat = cu_u[:, cp.newaxis]
-            new_diff = pow_fn(u_matrix=cu_umat) - cu_m
+            new_power = pow_fn(u_matrix=cu_umat)
+            new_diff = new_power - cu_m
             new_discrep = discrep_function(new_diff)
 
             if new_discrep < best_so_far:
                 best_so_far = new_discrep
                 best_u = cu_u.copy()
+                best_power = new_power.copy()
                 print(
-                    f"{str('{')}\"step\": {i}, \"discrepancy\": {best_so_far}, \"weights\": {best_u.astype(int).tolist()}{str('}')}",
+                    f"{str('{')}\"step\": {i}, \"discrepancy\": {best_so_far}, \"weights\": {best_u.astype(int).tolist()}, \"power\": {best_power.astype(float).tolist()}{str('}')}",
                     file=f,
                     flush=True,
                 )
@@ -139,6 +145,7 @@ def main(use_range, uuid, burst_length, n_bursts, threshold, show_progress, popu
                     continue
 
             cur_discrep = new_discrep
+            curr_power = new_power
             curr_diff = new_diff
 
 
